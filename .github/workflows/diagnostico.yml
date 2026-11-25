@@ -15,29 +15,55 @@ jobs:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Inspeccionar herramientas de compilacion
+      - name: Localizar Visual Studio, MSBuild y compilador C++
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Continue"
           $log = @()
           $log += "=== Sistema operativo ==="
           $log += (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture | Format-List | Out-String)
 
-          $log += "=== Visual Studio instalados ==="
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) {
-            $vs = & $vswhere -all -products * -format json
-            $log += $vs
-          } else {
-            $log += "vswhere.exe no encontrado"
+          if (-not (Test-Path $vswhere)) {
+            throw "No se encontro vswhere.exe. No se puede localizar Visual Studio."
           }
 
-          $log += "=== MSBuild ==="
-          $msbuild = Get-Command msbuild.exe -ErrorAction SilentlyContinue
-          if ($msbuild) { $log += $msbuild.Source } else { $log += "MSBuild no encontrado en PATH" }
+          $log += "=== Instancias de Visual Studio ==="
+          $log += (& $vswhere -all -products * -format table | Out-String)
 
-          $log += "=== Compilador C++ ==="
-          $cl = Get-Command cl.exe -ErrorAction SilentlyContinue
-          if ($cl) { $log += $cl.Source; $log += (& cl.exe 2>&1 | Out-String) } else { $log += "cl.exe no encontrado en PATH" }
+          $installationPath = & $vswhere -latest -products * -property installationPath
+          $log += "Ruta de Visual Studio: $installationPath"
+
+          $log += "=== MSBuild localizado por vswhere ==="
+          $msbuildPaths = @(& $vswhere -latest -products * -find 'MSBuild\**\Bin\MSBuild.exe')
+          if ($msbuildPaths.Count -gt 0 -and (Test-Path $msbuildPaths[0])) {
+            $msbuild = $msbuildPaths[0]
+            $log += "Encontrado: $msbuild"
+            $log += (& $msbuild -version -nologo 2>&1 | Out-String)
+          } else {
+            $log += "MSBuild no localizado en la instancia mas reciente."
+          }
+
+          $log += "=== Compilador C++ MSVC ==="
+          $clPaths = @(& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\cl.exe')
+          if ($clPaths.Count -gt 0 -and (Test-Path $clPaths[0])) {
+            $cl = $clPaths[0]
+            $log += "Encontrado: $cl"
+            $vcvars = Join-Path $installationPath 'VC\Auxiliary\Build\vcvars64.bat'
+            if (Test-Path $vcvars) {
+              $log += "Inicializando entorno x64 con: $vcvars"
+              $cmd = 'call "' + $vcvars + '" >nul && where cl.exe && cl.exe /Bv'
+              $log += (& cmd.exe /c $cmd 2>&1 | Out-String)
+            } else {
+              $log += "No se encontro vcvars64.bat."
+            }
+          } else {
+            $log += "No se encontro el compilador MSVC x64. Puede faltar el componente C++ de Visual Studio."
+          }
+
+          $log += "=== Componentes C++ detectados por vswhere ==="
+          $components = & $vswhere -latest -products * -format json
+          $log += $components
 
           $log | Out-File diagnostico-entorno.txt -Encoding utf8
           Get-Content diagnostico-entorno.txt
