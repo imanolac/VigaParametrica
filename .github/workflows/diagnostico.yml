@@ -1,75 +1,44 @@
-name: Diagnostico de compilacion ObjectARX
+
+name: Diagnostico ObjectARX 2022
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/diagnostico.yml"
 
 jobs:
   diagnostico:
     runs-on: windows-2022
-    steps:
-      - name: Descargar repositorio
-        uses: actions/checkout@v4
 
-      - name: Localizar Visual Studio, MSBuild y compilador C++
+    steps:
+      - name: Verificar Visual Studio y toolsets
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
-          $log = @()
-          $log += "=== Sistema operativo ==="
-          $log += (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture | Format-List | Out-String)
-
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path $vswhere)) {
-            throw "No se encontro vswhere.exe. No se puede localizar Visual Studio."
-          }
 
-          $log += "=== Instancias de Visual Studio ==="
-          $log += (& $vswhere -all -products * -format table | Out-String)
+          $vs = & $vswhere -latest -products * -property installationPath
 
-          $installationPath = & $vswhere -latest -products * -property installationPath
-          $log += "Ruta de Visual Studio: $installationPath"
+          Write-Host "Visual Studio: $vs"
 
-          $log += "=== MSBuild localizado por vswhere ==="
-          $msbuildPaths = @(& $vswhere -latest -products * -find 'MSBuild\**\Bin\MSBuild.exe')
-          if ($msbuildPaths.Count -gt 0 -and (Test-Path $msbuildPaths[0])) {
-            $msbuild = $msbuildPaths[0]
-            $log += "Encontrado: $msbuild"
-            $log += (& $msbuild -version -nologo 2>&1 | Out-String)
+          $vc = Join-Path $vs "VC\Tools\MSVC"
+
+          Write-Host "`nVersiones MSVC instaladas:"
+          Get-ChildItem $vc -Directory | Select-Object Name
+
+          Write-Host "`nComprobando toolset v142:"
+          $v142 = Join-Path $vs "VC\Tools\MSVC\14.29.30133"
+
+          if (Test-Path $v142) {
+              Write-Host "v142 encontrado"
           } else {
-            $log += "MSBuild no localizado en la instancia mas reciente."
+              Write-Host "v142 NO encontrado"
           }
 
-          $log += "=== Compilador C++ MSVC ==="
-          $clPaths = @(& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\cl.exe')
-          if ($clPaths.Count -gt 0 -and (Test-Path $clPaths[0])) {
-            $cl = $clPaths[0]
-            $log += "Encontrado: $cl"
-            $vcvars = Join-Path $installationPath 'VC\Auxiliary\Build\vcvars64.bat'
-            if (Test-Path $vcvars) {
-              $log += "Inicializando entorno x64 con: $vcvars"
-              $cmd = 'call "' + $vcvars + '" >nul && where cl.exe && cl.exe /Bv'
-              $log += (& cmd.exe /c $cmd 2>&1 | Out-String)
-            } else {
-              $log += "No se encontro vcvars64.bat."
-            }
-          } else {
-            $log += "No se encontro el compilador MSVC x64. Puede faltar el componente C++ de Visual Studio."
-          }
+          Write-Host "`nComprobando MSBuild:"
+          $msbuild = Join-Path $vs "MSBuild\Current\Bin\MSBuild.exe"
+          & $msbuild -version
 
-          $log += "=== Componentes C++ detectados por vswhere ==="
-          $components = & $vswhere -latest -products * -format json
-          $log += $components
-
-          $log | Out-File diagnostico-entorno.txt -Encoding utf8
-          Get-Content diagnostico-entorno.txt
-
-      - name: Guardar informe
-        uses: actions/upload-artifact@v4
-        with:
-          name: diagnostico-entorno-windows
-          path: diagnostico-entorno.txt
+      - name: Verificar disponibilidad de MSVC
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          where cl
+          cl
