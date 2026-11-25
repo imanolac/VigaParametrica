@@ -1,0 +1,49 @@
+name: Diagnostico de compilacion ObjectARX
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/diagnostico.yml"
+
+jobs:
+  diagnostico:
+    runs-on: windows-2022
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Inspeccionar herramientas de compilacion
+        shell: pwsh
+        run: |
+          $log = @()
+          $log += "=== Sistema operativo ==="
+          $log += (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture | Format-List | Out-String)
+
+          $log += "=== Visual Studio instalados ==="
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            $vs = & $vswhere -all -products * -format json
+            $log += $vs
+          } else {
+            $log += "vswhere.exe no encontrado"
+          }
+
+          $log += "=== MSBuild ==="
+          $msbuild = Get-Command msbuild.exe -ErrorAction SilentlyContinue
+          if ($msbuild) { $log += $msbuild.Source } else { $log += "MSBuild no encontrado en PATH" }
+
+          $log += "=== Compilador C++ ==="
+          $cl = Get-Command cl.exe -ErrorAction SilentlyContinue
+          if ($cl) { $log += $cl.Source; $log += (& cl.exe 2>&1 | Out-String) } else { $log += "cl.exe no encontrado en PATH" }
+
+          $log | Out-File diagnostico-entorno.txt -Encoding utf8
+          Get-Content diagnostico-entorno.txt
+
+      - name: Guardar informe
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostico-entorno-windows
+          path: diagnostico-entorno.txt
